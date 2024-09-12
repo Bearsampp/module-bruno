@@ -1,0 +1,14 @@
+# Jetbrains
+/*.iml
+/.idea
+
+# Bearsampp
+/.dev
+
+# Visual Studio
+.vscode/
+.vs/
+.vsc/
+
+# ignore "current" directories
+/**/current
