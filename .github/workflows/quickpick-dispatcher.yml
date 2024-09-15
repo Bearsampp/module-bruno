@@ -18,7 +18,7 @@ jobs:
             - name: Invoke workflow in another repo with inputs
               uses: benc-uk/workflow-dispatch@v1
               with:
-                  workflow: combine_releases.yml
+                  workflow: workflows/combine_releases.yml
                   repo: Bearsampp/Bearsampp
                   # Required when using the `repo` option. Either a PAT or a token generated from the GitHub app or CLI
                   token: "${{ secrets.GH_PAT }}"
