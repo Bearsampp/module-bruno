@@ -14,3 +14,6 @@ https://bearsampp.com/module/bruno
 ## Issues
 
 Issues must be reported on [Bearsampp repository](https://github.com/bearsampp/bearsampp/issues).
+
+## Statistics
+![Alt](https://repobeats.axiom.co/api/embed/d4b9f82a31c270b2d20d93e7ccf77113ff5930f2.svg "Repobeats analytics image")
