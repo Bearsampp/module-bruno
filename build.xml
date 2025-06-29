@@ -21,12 +21,12 @@
         <replaceproperty src="bundle.folder" dest="bundle.version" replace="${bundle.name}" with=""/>
 
         <getmoduleuntouched name="${bundle.name}" version="${bundle.version}" propSrcDest="bundle.srcdest" propSrcFilename="bundle.srcfilename"/>
-        <assertfile file="${bundle.srcdest}/win-unpacked/bruno.exe"/>
+        <assertfile file="${bundle.srcdest}/bruno.exe"/>
 
         <delete dir="${bundle.tmp.prep.path}/${bundle.folder}"/>
         <mkdir dir="${bundle.tmp.prep.path}/${bundle.folder}"/>
         <copy todir="${bundle.tmp.prep.path}/${bundle.folder}" overwrite="true">
-            <fileset dir="${bundle.srcdest}/win-unpacked"/>
+            <fileset dir="${bundle.srcdest}"/>
         </copy>
         <copy todir="${bundle.tmp.prep.path}/${bundle.folder}" overwrite="true">
             <fileset dir="${bundle.path}" defaultexcludes="yes"/>
