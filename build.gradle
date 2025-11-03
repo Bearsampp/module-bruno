@@ -83,9 +83,9 @@ tasks.register('info') {
 
     doLast {
         println """
-        ╔════════════════════════════════════════════════════════════════╗
-        ║           Bearsampp Module Bruno - Build Info                  ║
-        ╚════════════════════════════════════════════════════════════════╝
+        ================================================================
+                  Bearsampp Module Bruno - Build Info
+        ================================================================
 
         Project:        ${project.name}
         Version:        ${project.version}
@@ -111,9 +111,9 @@ tasks.register('info') {
           Home:         ${gradle.gradleHomeDir}
 
         Available Task Groups:
-          • build        - Build and package tasks
-          • ant tasks    - Legacy Ant tasks (prefixed with 'ant-')
-          • help         - Help and information tasks
+          * build        - Build and package tasks
+          * ant tasks    - Legacy Ant tasks (prefixed with 'ant-')
+          * help         - Help and information tasks
 
         Quick Start:
           gradle tasks                              - List all available tasks
@@ -139,9 +139,9 @@ tasks.register('release') {
 
         if (versionToBuild) {
             // Non-interactive mode with specified version
-            println "═".multiply(70)
+            println "=".multiply(70)
             println "Building release for ${bundleName} version ${versionToBuild}..."
-            println "═".multiply(70)
+            println "=".multiply(70)
 
             def bundlePath = file("${projectDir}/bin/${bundleName}${versionToBuild}")
 
@@ -171,15 +171,15 @@ tasks.register('release') {
             }
 
             println ""
-            println "═".multiply(70)
-            println "✓ Release build completed successfully for version ${versionToBuild}"
-            println "═".multiply(70)
+            println "=".multiply(70)
+            println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
+            println "=".multiply(70)
         } else {
             // Interactive mode - call Ant release target which will prompt for input
-            println "═".multiply(70)
+            println "=".multiply(70)
             println "Starting interactive release build..."
             println "You will be prompted to enter the bundle version."
-            println "═".multiply(70)
+            println "=".multiply(70)
             println ""
 
             // Call the imported ant-release target for interactive mode
@@ -188,9 +188,9 @@ tasks.register('release') {
             }
 
             println ""
-            println "═".multiply(70)
-            println "✓ Release build completed"
-            println "═".multiply(70)
+            println "=".multiply(70)
+            println "[SUCCESS] Release build completed"
+            println "=".multiply(70)
         }
     }
 }
@@ -221,7 +221,7 @@ tasks.named('clean') {
             }
         }
 
-        println "✓ Build artifacts cleaned"
+        println "[SUCCESS] Build artifacts cleaned"
     }
 }
 
@@ -250,21 +250,21 @@ tasks.register('verify') {
         checks['build-bundle.xml'] = file("${devPath}/build/build-bundle.xml").exists()
 
         println "\nEnvironment Check Results:"
-        println "─".multiply(60)
+        println "-".multiply(60)
         checks.each { name, passed ->
-            def status = passed ? "✓ PASS" : "✗ FAIL"
+            def status = passed ? "[PASS]" : "[FAIL]"
             println "  ${status.padRight(10)} ${name}"
         }
-        println "─".multiply(60)
+        println "-".multiply(60)
 
         def allPassed = checks.values().every { it }
         if (allPassed) {
-            println "\n✓ All checks passed! Build environment is ready."
+            println "\n[SUCCESS] All checks passed! Build environment is ready."
             println "\nYou can now run:"
             println "  gradle release                            - Interactive release"
             println "  gradle release \"-PbundleVersion=2.13.0\"   - Non-interactive release"
         } else {
-            println "\n⚠ Some checks failed. Please review the requirements."
+            println "\n[WARNING] Some checks failed. Please review the requirements."
             throw new GradleException("Build environment verification failed")
         }
     }
@@ -286,11 +286,11 @@ tasks.register('listReleases') {
         releasesFile.withInputStream { releases.load(it) }
 
         println "\nAvailable Bruno Releases:"
-        println "─".multiply(80)
+        println "-".multiply(80)
         releases.sort { it.key }.each { version, url ->
-            println "  ${version.padRight(10)} → ${url}"
+            println "  ${version.padRight(10)} -> ${url}"
         }
-        println "─".multiply(80)
+        println "-".multiply(80)
         println "Total releases: ${releases.size()}"
     }
 }
@@ -313,11 +313,11 @@ tasks.register('listVersions') {
             .sort()
 
         println "\nAvailable ${bundleName} versions in bin/:"
-        println "─".multiply(60)
+        println "-".multiply(60)
         versions.each { version ->
             println "  ${version}"
         }
-        println "─".multiply(60)
+        println "-".multiply(60)
         println "Total versions: ${versions.size()}"
         println "\nTo build a specific version:"
         println "  gradle release \"-PbundleVersion=${versions.last()}\""
@@ -342,12 +342,12 @@ tasks.register('validateProperties') {
         }
 
         if (missing.isEmpty()) {
-            println "✓ All required properties are present:"
+            println "[SUCCESS] All required properties are present:"
             required.each { prop ->
                 println "    ${prop} = ${buildProps.getProperty(prop)}"
             }
         } else {
-            println "✗ Missing required properties:"
+            println "[ERROR] Missing required properties:"
             missing.each { prop ->
                 println "    - ${prop}"
             }
