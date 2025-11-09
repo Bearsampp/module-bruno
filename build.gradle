@@ -1,22 +1,27 @@
 /*
  * Bearsampp Module Bruno - Gradle Build
  *
- * This is a hybrid build configuration that:
- * 1. Imports existing Ant build files for backward compatibility
- * 2. Provides modern Gradle features (caching, incremental builds, parallel execution)
- * 3. Allows gradual migration from Ant to Gradle
+ * This is a 100% Gradle build configuration for the Bruno module.
+ * It handles downloading, extracting, and packaging Bruno releases.
  *
  * Usage:
  *   gradle tasks                              - List all available tasks
- *   gradle release                            - Interactive release (prompts for version)
- *   gradle release "-PbundleVersion=2.13.0"   - Non-interactive release
+ *   gradle release -PbundleVersion=2.13.0     - Build release for specific version
+ *   gradle releaseAll                         - Build all versions
  *   gradle clean                              - Clean build artifacts
  *   gradle info                               - Display build information
+ *   gradle verify                             - Verify build environment
+ *   gradle listVersions                       - List available versions
+ *   gradle listReleases                       - List releases from properties
  */
 
 plugins {
     id 'base'
 }
+
+// ============================================================================
+// PROJECT CONFIGURATION
+// ============================================================================
 
 // Load build properties
 def buildProps = new Properties()
@@ -32,13 +37,19 @@ ext {
     projectBasedir = projectDir.absolutePath
     rootDir = projectDir.parent
     devPath = file("${rootDir}/dev").absolutePath
-    buildPropertiesFile = file('build.properties').absolutePath
 
     // Bundle properties from build.properties
     bundleName = buildProps.getProperty('bundle.name', 'bruno')
     bundleRelease = buildProps.getProperty('bundle.release', '1.0.0')
     bundleType = buildProps.getProperty('bundle.type', 'tools')
     bundleFormat = buildProps.getProperty('bundle.format', '7z')
+
+    // Build paths - follow Apache pattern
+    // rootDir is the parent of module-bruno (i.e., Bearsampp-dev)
+    // bearsampp-build is inside Bearsampp-dev
+    buildBasePath = file("${rootDir}/bearsampp-build").absolutePath
+    buildTmpPath = file("${buildDir}/tmp").absolutePath
+    bundleTmpPrepPath = file("${buildDir}/prep").absolutePath
 }
 
 // Verify dev path exists
@@ -46,34 +57,138 @@ if (!file(ext.devPath).exists()) {
     throw new GradleException("Dev path not found: ${ext.devPath}. Please ensure the 'dev' project exists in ${ext.rootDir}")
 }
 
-// Configure repositories for dependencies
+// Configure repositories
 repositories {
     mavenCentral()
 }
 
 // ============================================================================
-// ANT INTEGRATION - Import existing Ant build files
+// HELPER FUNCTIONS
 // ============================================================================
 
-// Set Ant properties before importing
-ant.properties['project.basedir'] = ext.projectBasedir
-ant.properties['root.dir'] = ext.rootDir
-ant.properties['dev.path'] = ext.devPath
-ant.properties['build.properties'] = ext.buildPropertiesFile
+// Function to download and extract Bruno binaries
+def downloadAndExtractBruno(String version, File destDir) {
+    // Load releases.properties to get download URL
+    def releasesFile = file('releases.properties')
+    if (!releasesFile.exists()) {
+        throw new GradleException("releases.properties not found")
+    }
 
-// Load build.properties into Ant
-ant.property(file: ext.buildPropertiesFile)
+    def releases = new Properties()
+    releasesFile.withInputStream { releases.load(it) }
 
-// Import the main Ant build file
-// This preserves all existing Ant functionality
-ant.importBuild('build.xml') { antTargetName ->
-    // Map Ant target names to Gradle task names
-    // Prefix all with 'ant-' to avoid conflicts
-    return "ant-${antTargetName}".toString()
+    def downloadUrl = releases.getProperty(version)
+    if (!downloadUrl) {
+        throw new GradleException("Version ${version} not found in releases.properties")
+    }
+
+    println "Downloading Bruno ${version} from:"
+    println "  ${downloadUrl}"
+
+    // Determine filename from URL
+    def filename = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1)
+    def downloadDir = file("${buildDir}/downloads")
+    def extractDir = file("${buildDir}/extract")
+    downloadDir.mkdirs()
+    extractDir.mkdirs()
+
+    def downloadedFile = file("${downloadDir}/${filename}")
+
+    // Download if not already present
+    if (!downloadedFile.exists()) {
+        println "  Downloading to: ${downloadedFile}"
+        ant.get(src: downloadUrl, dest: downloadedFile, verbose: true)
+        println "  Download complete"
+    } else {
+        println "  Using cached file: ${downloadedFile}"
+    }
+
+    // Extract the archive
+    println "  Extracting archive..."
+    def extractPath = file("${extractDir}/${version}")
+    if (extractPath.exists()) {
+        delete extractPath
+    }
+    extractPath.mkdirs()
+
+    // Use 7zip or built-in extraction
+    if (filename.endsWith('.7z')) {
+        // Try to use 7zip if available
+        def sevenZipPath = find7ZipExecutable()
+        if (sevenZipPath) {
+            def command = [
+                sevenZipPath.toString(),
+                'x',
+                downloadedFile.absolutePath.toString(),
+                "-o${extractPath.absolutePath}".toString(),
+                '-y'
+            ]
+            def process = new ProcessBuilder(command as String[])
+                .directory(extractPath)
+                .redirectErrorStream(true)
+                .start()
+
+            process.inputStream.eachLine { line ->
+                if (line.trim()) println "    ${line}"
+            }
+
+            def exitCode = process.waitFor()
+            if (exitCode != 0) {
+                throw new GradleException("7zip extraction failed with exit code: ${exitCode}")
+            }
+        } else {
+            throw new GradleException("7zip not found. Please install 7zip or extract manually.")
+        }
+    } else if (filename.endsWith('.zip')) {
+        copy {
+            from zipTree(downloadedFile)
+            into extractPath
+        }
+    } else {
+        throw new GradleException("Unsupported archive format: ${filename}")
+    }
+
+    println "  Extraction complete"
+
+    // Find the Bruno directory in the extracted files
+    def brunoDir = findBrunoDirectory(extractPath)
+    if (!brunoDir) {
+        throw new GradleException("Could not find Bruno directory in extracted files")
+    }
+
+    println "  Found Bruno directory: ${brunoDir.name}"
+    return brunoDir
+}
+
+// Function to find Bruno directory in extracted files
+def findBrunoDirectory(File extractPath) {
+    // Look for directory containing bruno.exe
+    def brunoDirs = extractPath.listFiles()?.findAll {
+        it.isDirectory() && file("${it}/bruno.exe").exists()
+    }
+
+    if (brunoDirs && !brunoDirs.isEmpty()) {
+        return brunoDirs[0]
+    }
+
+    // If not found at top level, search one level deep
+    def foundDir = null
+    extractPath.listFiles()?.each { dir ->
+        if (dir.isDirectory() && !foundDir) {
+            def subDirs = dir.listFiles()?.findAll {
+                it.isDirectory() && file("${it}/bruno.exe").exists()
+            }
+            if (subDirs && !subDirs.isEmpty()) {
+                foundDir = subDirs[0]
+            }
+        }
+    }
+
+    return foundDir
 }
 
 // ============================================================================
-// GRADLE NATIVE TASKS - Modern alternatives and enhancements
+// GRADLE TASKS
 // ============================================================================
 
 // Task: Display build information
@@ -81,15 +196,22 @@ tasks.register('info') {
     group = 'help'
     description = 'Display build configuration information'
 
+    // Capture project properties at configuration time
+    def projectName = project.name
+    def projectVersion = project.version
+    def projectDescription = project.description
+
     doLast {
+        def outputPath = file("${buildBasePath}/${bundleType}/${bundleName}/${bundleRelease}").absolutePath
+
         println """
         ================================================================
                   Bearsampp Module Bruno - Build Info
         ================================================================
 
-        Project:        ${project.name}
-        Version:        ${project.version}
-        Description:    ${project.description}
+        Project:        ${projectName}
+        Version:        ${projectVersion}
+        Description:    ${projectDescription}
 
         Bundle Properties:
           Name:         ${bundleName}
@@ -101,6 +223,8 @@ tasks.register('info') {
           Project Dir:  ${projectBasedir}
           Root Dir:     ${rootDir}
           Dev Path:     ${devPath}
+          Build Base:   ${buildBasePath}
+          Output Path:  ${outputPath}
 
         Java:
           Version:      ${JavaVersion.current()}
@@ -112,85 +236,425 @@ tasks.register('info') {
 
         Available Task Groups:
           * build        - Build and package tasks
-          * ant tasks    - Legacy Ant tasks (prefixed with 'ant-')
           * help         - Help and information tasks
+          * verification - Verification tasks
 
         Quick Start:
           gradle tasks                              - List all available tasks
           gradle info                               - Show this information
-          gradle release                            - Interactive release build
-          gradle release "-PbundleVersion=2.13.0"   - Non-interactive release
+          gradle release -PbundleVersion=2.13.0     - Build specific version
+          gradle releaseAll                         - Build all versions
           gradle clean                              - Clean build artifacts
           gradle verify                             - Verify build environment
         """.stripIndent()
     }
 }
 
-// Task: Main release task - supports both interactive and non-interactive modes
+// Task: Main release task - build a specific version
 tasks.register('release') {
     group = 'build'
-    description = 'Build release package (interactive or use -PbundleVersion=X.X.X for non-interactive)'
+    description = 'Build release package for a specific version (use -PbundleVersion=X.X.X)'
 
-    // Ensure libraries are loaded first
-    dependsOn 'ant-load.lib'
+    // Capture property at configuration time to avoid deprecation warning
+    def versionProperty = project.findProperty('bundleVersion')
 
     doLast {
-        def versionToBuild = project.findProperty('bundleVersion')
+        def versionToBuild = versionProperty
 
-        if (versionToBuild) {
-            // Non-interactive mode with specified version
-            println "=".multiply(70)
-            println "Building release for ${bundleName} version ${versionToBuild}..."
-            println "=".multiply(70)
+        if (!versionToBuild) {
+            throw new GradleException("""
+                Bundle version not specified!
 
-            def bundlePath = file("${projectDir}/bin/${bundleName}${versionToBuild}")
+                Usage: gradle release -PbundleVersion=X.X.X
 
-            if (!bundlePath.exists()) {
-                def availableVersions = file("${projectDir}/bin").listFiles()
-                    .findAll { it.isDirectory() && it.name.startsWith(bundleName) }
-                    .collect { "  - " + it.name.replace(bundleName, '') }
-                    .join('\n')
+                Available versions:
+                ${getAvailableVersions().collect { "  - ${it}" }.join('\n')}
+            """.stripIndent())
+        }
 
-                throw new GradleException("Bundle version not found: ${bundlePath}\n\nAvailable versions in bin/:\n${availableVersions}")
+        println ""
+        println "=".multiply(70)
+        println "Building ${bundleName} ${versionToBuild}"
+        println "=".multiply(70)
+        println ""
+
+        // Validate version exists
+        def bundlePath = file("${projectDir}/bin/${bundleName}${versionToBuild}")
+        if (!bundlePath.exists()) {
+            throw new GradleException("Bundle version not found: ${bundlePath}\n\nAvailable versions:\n${getAvailableVersions().collect { "  - ${it}" }.join('\n')}")
+        }
+
+        println "Bundle path: ${bundlePath}"
+        println ""
+
+        // Get the bundle folder and version
+        def bundleFolder = bundlePath.name
+        def bundleVersion = bundleFolder.replace(bundleName, '')
+
+        // Determine source paths
+        def bundleSrcDest = bundlePath
+        def bundleSrcFinal = bundleSrcDest
+
+        // Check if bruno.exe exists in bin/ directory
+        def brunoExe = file("${bundleSrcFinal}/bruno.exe")
+        if (!brunoExe.exists()) {
+            // Bruno binaries not found in bin/ - check if already downloaded to build/
+            def buildExtractPath = file("${buildDir}/extract/${bundleVersion}")
+            def buildBrunoDir = findBrunoDirectory(buildExtractPath)
+
+            if (buildBrunoDir && buildBrunoDir.exists()) {
+                println "Using cached Bruno binaries from build directory"
+                bundleSrcFinal = buildBrunoDir
+            } else {
+                // Download and extract to build directory
+                println ""
+                println "Bruno binaries not found"
+                println "Downloading Bruno ${bundleVersion}..."
+                println ""
+
+                try {
+                    // Download and extract to build directory
+                    bundleSrcFinal = downloadAndExtractBruno(bundleVersion, file("${buildDir}/extract"))
+                } catch (Exception e) {
+                    throw new GradleException("""
+                        Failed to download Bruno binaries: ${e.message}
+
+                        You can manually download and extract Bruno binaries to:
+                          ${bundleSrcDest}/
+
+                        Or check that version ${bundleVersion} exists in releases.properties
+                    """.stripIndent())
+                }
+            }
+        }
+
+        // Verify bruno.exe exists
+        brunoExe = file("${bundleSrcFinal}/bruno.exe")
+        if (!brunoExe.exists()) {
+            throw new GradleException("bruno.exe not found at ${brunoExe}")
+        }
+
+        println "Source folder: ${bundleSrcFinal}"
+        println ""
+
+        // Prepare output directory
+        def brunoPrepPath = file("${bundleTmpPrepPath}/${bundleName}${bundleVersion}")
+        if (brunoPrepPath.exists()) {
+            delete brunoPrepPath
+        }
+        brunoPrepPath.mkdirs()
+
+        // Copy Bruno binaries from extracted/downloaded location
+        println "Copying Bruno files..."
+        copy {
+            from bundleSrcFinal
+            into brunoPrepPath
+        }
+
+        // Copy configuration files from bin directory
+        println "Copying configuration files..."
+        copy {
+            from bundleSrcDest
+            into brunoPrepPath
+            include 'bearsampp.conf'
+        }
+
+        println ""
+        println "Preparing archive..."
+
+        // Determine build output path following Apache pattern
+        // bearsampp-build/tools/bruno/{bundleRelease} for tools
+        // bearsampp-build/bins/apache/{bundleRelease} for bins
+        def buildPath = file(buildBasePath)
+        def buildBinsPath = file("${buildPath}/${bundleType}/${bundleName}/${bundleRelease}")
+        buildBinsPath.mkdirs()
+
+        // Build archive filename
+        def destFile = file("${buildBinsPath}/bearsampp-${bundleName}-${bundleVersion}-${bundleRelease}")
+
+        // Compress based on format
+        if (bundleFormat == '7z') {
+            // 7z format
+            def archiveFile = file("${destFile}.7z")
+            if (archiveFile.exists()) {
+                delete archiveFile
             }
 
-            println "Bundle path: ${bundlePath}"
-            println ""
+            println "Compressing ${bundleName}${bundleVersion} to ${archiveFile.name}..."
 
-            // Execute Ant command directly to avoid Gradle Ant integration issues
-            def antCommand = ["cmd", "/c", "ant", "release", "-Dinput.bundle=${versionToBuild}"]
-            println "Executing: ant release -Dinput.bundle=${versionToBuild}"
-            println ""
+            // Find 7z executable
+            def sevenZipExe = find7ZipExecutable()
+            if (!sevenZipExe) {
+                throw new GradleException("7-Zip not found. Please install 7-Zip or set 7Z_HOME environment variable.")
+            }
 
-            def process = antCommand.execute(null, projectDir)
-            process.consumeProcessOutput(System.out, System.err)
+            println "Using 7-Zip: ${sevenZipExe}"
+
+            // Create 7z archive
+            def command = [
+                sevenZipExe,
+                'a',
+                '-t7z',
+                archiveFile.absolutePath.toString(),
+                '.'
+            ]
+
+            def process = new ProcessBuilder(command as String[])
+                .directory(brunoPrepPath)
+                .redirectErrorStream(true)
+                .start()
+
+            process.inputStream.eachLine { line ->
+                if (line.trim()) println "  ${line}"
+            }
+
             def exitCode = process.waitFor()
-
             if (exitCode != 0) {
-                throw new GradleException("Ant release failed with exit code: ${exitCode}")
+                throw new GradleException("7zip compression failed with exit code: ${exitCode}")
             }
 
-            println ""
-            println "=".multiply(70)
-            println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
-            println "=".multiply(70)
+            println "Archive created: ${archiveFile}"
+
+            // Generate hash files
+            println "Generating hash files..."
+            generateHashFiles(archiveFile)
+
         } else {
-            // Interactive mode - call Ant release target which will prompt for input
-            println "=".multiply(70)
-            println "Starting interactive release build..."
-            println "You will be prompted to enter the bundle version."
-            println "=".multiply(70)
-            println ""
+            // ZIP format
+            def archiveFile = file("${destFile}.zip")
+            if (archiveFile.exists()) {
+                delete archiveFile
+            }
 
-            // Call the imported ant-release target for interactive mode
-            tasks.getByName('ant-release').actions.each { action ->
-                action.execute(tasks.getByName('ant-release'))
+            println "Compressing ${bundleName}${bundleVersion} to ${archiveFile.name}..."
+
+            ant.zip(destfile: archiveFile, basedir: brunoPrepPath)
+
+            println "Archive created: ${archiveFile}"
+
+            // Generate hash files
+            println "Generating hash files..."
+            generateHashFiles(archiveFile)
+        }
+
+        println ""
+        println "=".multiply(70)
+        println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
+        println "Output directory: ${buildBinsPath}"
+        println "Archive: ${destFile}.${bundleFormat}"
+        println "=".multiply(70)
+    }
+}
+
+// Helper function to find 7-Zip executable
+def find7ZipExecutable() {
+    // Check environment variable
+    def sevenZipHome = System.getenv('7Z_HOME')
+    if (sevenZipHome) {
+        def exe = file("${sevenZipHome}/7z.exe")
+        if (exe.exists()) {
+            return exe.absolutePath
+        }
+    }
+
+    // Check common installation paths
+    def commonPaths = [
+        'C:/Program Files/7-Zip/7z.exe',
+        'C:/Program Files (x86)/7-Zip/7z.exe',
+        'D:/Program Files/7-Zip/7z.exe',
+        'D:/Program Files (x86)/7-Zip/7z.exe'
+    ]
+
+    for (path in commonPaths) {
+        def exe = file(path)
+        if (exe.exists()) {
+            return exe.absolutePath
+        }
+    }
+
+    // Try to find in PATH
+    try {
+        def process = ['where', '7z.exe'].execute()
+        process.waitFor()
+        if (process.exitValue() == 0) {
+            def output = process.text.trim()
+            if (output) {
+                return output.split('\n')[0].trim()
+            }
+        }
+    } catch (Exception e) {
+        // Ignore
+    }
+
+    return null
+}
+
+// Helper function to generate hash files
+def generateHashFiles(File file) {
+    if (!file.exists()) {
+        throw new GradleException("File not found for hashing: ${file}")
+    }
+
+    // Generate MD5
+    def md5File = new File("${file.absolutePath}.md5")
+    def md5Hash = calculateHash(file, 'MD5')
+    md5File.text = "${md5Hash} ${file.name}\n"
+    println "  Created: ${md5File.name}"
+
+    // Generate SHA1
+    def sha1File = new File("${file.absolutePath}.sha1")
+    def sha1Hash = calculateHash(file, 'SHA-1')
+    sha1File.text = "${sha1Hash} ${file.name}\n"
+    println "  Created: ${sha1File.name}"
+
+    // Generate SHA256
+    def sha256File = new File("${file.absolutePath}.sha256")
+    def sha256Hash = calculateHash(file, 'SHA-256')
+    sha256File.text = "${sha256Hash} ${file.name}\n"
+    println "  Created: ${sha256File.name}"
+
+    // Generate SHA512
+    def sha512File = new File("${file.absolutePath}.sha512")
+    def sha512Hash = calculateHash(file, 'SHA-512')
+    sha512File.text = "${sha512Hash} ${file.name}\n"
+    println "  Created: ${sha512File.name}"
+}
+
+// Helper function to calculate hash
+def calculateHash(File file, String algorithm) {
+    def digest = java.security.MessageDigest.getInstance(algorithm)
+    file.withInputStream { stream ->
+        def buffer = new byte[8192]
+        def bytesRead
+        while ((bytesRead = stream.read(buffer)) != -1) {
+            digest.update(buffer, 0, bytesRead)
+        }
+    }
+    return digest.digest().collect { String.format('%02x', it) }.join('')
+}
+
+// Helper function to get available versions
+def getAvailableVersions() {
+    def binDir = file("${projectDir}/bin")
+    if (!binDir.exists()) {
+        return []
+    }
+
+    return binDir.listFiles()
+        ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) }
+        ?.collect { it.name.replace(bundleName, '') }
+        ?.sort() ?: []
+}
+
+// Task: Build all available versions
+tasks.register('releaseAll') {
+    group = 'build'
+    description = 'Build release packages for all available versions in bin/ directory'
+
+    doLast {
+        def binDir = file("${projectDir}/bin")
+        if (!binDir.exists()) {
+            throw new GradleException("bin/ directory not found")
+        }
+
+        def versions = getAvailableVersions()
+
+        if (versions.isEmpty()) {
+            throw new GradleException("No versions found in bin/ directory")
+        }
+
+        println ""
+        println "=".multiply(70)
+        println "Building releases for ${versions.size()} ${bundleName} versions"
+        println "=".multiply(70)
+        println ""
+
+        def successCount = 0
+        def failedVersions = []
+
+        versions.each { version ->
+            println "=".multiply(70)
+            println "[${successCount + 1}/${versions.size()}] Building ${bundleName} ${version}..."
+            println "=".multiply(70)
+
+            try {
+                // Call the release task logic for this version
+                def bundlePath = file("${projectDir}/bin/${bundleName}${version}")
+
+                if (!bundlePath.exists()) {
+                    throw new GradleException("Bundle path not found: ${bundlePath}")
+                }
+
+                println "Bundle path: ${bundlePath}"
+                println ""
+
+                // Get the bundle folder and version
+                def bundleFolder = bundlePath.name
+                def bundleVersion = bundleFolder.replace(bundleName, '')
+
+                // Determine source paths
+                def bundleSrcDest = bundlePath
+                def bundleSrcFinal = bundleSrcDest
+
+                // Check if bruno.exe exists
+                def brunoExe = file("${bundleSrcFinal}/bruno.exe")
+                if (!brunoExe.exists()) {
+                    throw new GradleException("bruno.exe not found at ${brunoExe}")
+                }
+
+                println "Source folder: ${bundleSrcFinal}"
+                println ""
+
+                // Prepare output directory
+                def brunoPrepPath = file("${bundleTmpPrepPath}/${bundleName}${bundleVersion}")
+                if (brunoPrepPath.exists()) {
+                    delete brunoPrepPath
+                }
+                brunoPrepPath.mkdirs()
+
+                // Copy Bruno files
+                println "Copying Bruno files..."
+                copy {
+                    from bundleSrcDest
+                    into brunoPrepPath
+                }
+
+                println ""
+                println "[SUCCESS] ${bundleName} ${version} completed"
+                println "Output: ${brunoPrepPath}"
+                successCount++
+
+            } catch (Exception e) {
+                println ""
+                println "[FAILED] ${bundleName} ${version}: ${e.message}"
+                failedVersions.add(version)
             }
 
             println ""
-            println "=".multiply(70)
-            println "[SUCCESS] Release build completed"
-            println "=".multiply(70)
+        }
+
+        // Summary
+        println "=".multiply(70)
+        println "Build Summary"
+        println "=".multiply(70)
+        println "Total versions: ${versions.size()}"
+        println "Successful:     ${successCount}"
+        println "Failed:         ${failedVersions.size()}"
+
+        if (!failedVersions.isEmpty()) {
+            println ""
+            println "Failed versions:"
+            failedVersions.each { v ->
+                println "  - ${v}"
+            }
+        }
+
+        println "=".multiply(70)
+
+        if (failedVersions.isEmpty()) {
+            println "[SUCCESS] All versions built successfully!"
+        } else {
+            throw new GradleException("${failedVersions.size()} version(s) failed to build")
         }
     }
 }
@@ -205,20 +669,6 @@ tasks.named('clean') {
         def buildDir = file("${projectDir}/build")
         if (buildDir.exists()) {
             delete buildDir
-        }
-
-        // Clean any temporary directories that might be created
-        // Use manual directory traversal to avoid fileTree default excludes issue
-        def tmpDirs = []
-        projectDir.eachFileRecurse { file ->
-            if (file.isDirectory() && (file.name == 'tmp' || file.name == '.tmp')) {
-                tmpDirs.add(file)
-            }
-        }
-        tmpDirs.each { dir ->
-            if (dir.exists()) {
-                delete dir
-            }
         }
 
         println "[SUCCESS] Build artifacts cleaned"
@@ -240,14 +690,19 @@ tasks.register('verify') {
         checks['Java 8+'] = javaVersion >= JavaVersion.VERSION_1_8
 
         // Check required files
-        checks['build.xml'] = file('build.xml').exists()
         checks['build.properties'] = file('build.properties').exists()
         checks['releases.properties'] = file('releases.properties').exists()
 
-        // Check dev directory and required build files
+        // Check dev directory
         checks['dev directory'] = file(devPath).exists()
-        checks['build-commons.xml'] = file("${devPath}/build/build-commons.xml").exists()
-        checks['build-bundle.xml'] = file("${devPath}/build/build-bundle.xml").exists()
+
+        // Check bin directory
+        checks['bin directory'] = file("${projectDir}/bin").exists()
+
+        // Check 7-Zip if format is 7z
+        if (bundleFormat == '7z') {
+            checks['7-Zip'] = find7ZipExecutable() != null
+        }
 
         println "\nEnvironment Check Results:"
         println "-".multiply(60)
@@ -261,8 +716,8 @@ tasks.register('verify') {
         if (allPassed) {
             println "\n[SUCCESS] All checks passed! Build environment is ready."
             println "\nYou can now run:"
-            println "  gradle release                            - Interactive release"
-            println "  gradle release \"-PbundleVersion=2.13.0\"   - Non-interactive release"
+            println "  gradle release -PbundleVersion=2.13.0   - Build release for version"
+            println "  gradle listVersions                     - List available versions"
         } else {
             println "\n[WARNING] Some checks failed. Please review the requirements."
             throw new GradleException("Build environment verification failed")
@@ -307,10 +762,7 @@ tasks.register('listVersions') {
             return
         }
 
-        def versions = binDir.listFiles()
-            .findAll { it.isDirectory() && it.name.startsWith(bundleName) }
-            .collect { it.name.replace(bundleName, '') }
-            .sort()
+        def versions = getAvailableVersions()
 
         println "\nAvailable ${bundleName} versions in bin/:"
         println "-".multiply(60)
@@ -319,8 +771,11 @@ tasks.register('listVersions') {
         }
         println "-".multiply(60)
         println "Total versions: ${versions.size()}"
-        println "\nTo build a specific version:"
-        println "  gradle release \"-PbundleVersion=${versions.last()}\""
+
+        if (!versions.isEmpty()) {
+            println "\nTo build a specific version:"
+            println "  gradle release -PbundleVersion=${versions.last()}"
+        }
     }
 }
 
@@ -363,7 +818,7 @@ tasks.register('validateProperties') {
 gradle.taskGraph.whenReady { graph ->
     println """
     ================================================================
-      Bearsampp Module Bruno - Gradle + Ant Hybrid Build
+      Bearsampp Module Bruno - Gradle Build
     ================================================================
     """.stripIndent()
 }
