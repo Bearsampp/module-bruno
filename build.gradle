@@ -319,10 +319,13 @@ tasks.register('release') {
         println "=".multiply(70)
         println ""
 
-        // Validate version exists
+        // Validate version exists - check both bin and bin/archived directories
         def bundlePath = file("${projectDir}/bin/${bundleName}${versionToBuild}")
         if (!bundlePath.exists()) {
-            throw new GradleException("Bundle version not found: ${bundlePath}\n\nAvailable versions:\n${getAvailableVersions().collect { "  - ${it}" }.join('\n')}")
+            bundlePath = file("${projectDir}/bin/archived/${bundleName}${versionToBuild}")
+            if (!bundlePath.exists()) {
+                throw new GradleException("Bundle version not found in bin/ or bin/archived/\n\nAvailable versions:\n${getAvailableVersions().collect { "  - ${it}" }.join('\n')}")
+            }
         }
 
         println "Bundle path: ${bundlePath}"
@@ -576,15 +579,28 @@ def calculateHash(File file, String algorithm) {
 
 // Helper function to get available versions
 def getAvailableVersions() {
+    def versions = []
+    
+    // Check bin directory
     def binDir = file("${projectDir}/bin")
-    if (!binDir.exists()) {
-        return []
+    if (binDir.exists()) {
+        def binVersions = binDir.listFiles()
+            ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) && it.name != 'archived' }
+            ?.collect { it.name.replace(bundleName, '') } ?: []
+        versions.addAll(binVersions)
     }
-
-    return binDir.listFiles()
-        ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) }
-        ?.collect { it.name.replace(bundleName, '') }
-        ?.sort() ?: []
+    
+    // Check bin/archived subdirectory
+    def archivedDir = file("${projectDir}/bin/archived")
+    if (archivedDir.exists()) {
+        def archivedVersions = archivedDir.listFiles()
+            ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) }
+            ?.collect { it.name.replace(bundleName, '') } ?: []
+        versions.addAll(archivedVersions)
+    }
+    
+    // Remove duplicates and sort
+    return versions.unique().sort()
 }
 
 // Task: Build all available versions
@@ -791,24 +807,34 @@ tasks.register('listReleases') {
     }
 }
 
-// Task: List available bundle versions in bin directory
+// Task: List available bundle versions in bin and bin/archived directories
 tasks.register('listVersions') {
     group = 'help'
-    description = 'List all available bundle versions in bin/ directory'
+    description = 'List all available bundle versions in bin/ and bin/archived/ directories'
 
     doLast {
-        def binDir = file("${projectDir}/bin")
-        if (!binDir.exists()) {
-            println "bin/ directory not found"
+        def versions = getAvailableVersions()
+
+        if (versions.isEmpty()) {
+            println "\nNo versions found in bin/ or bin/archived/ directories"
             return
         }
 
-        def versions = getAvailableVersions()
-
-        println "\nAvailable ${bundleName} versions in bin/:"
+        println "\nAvailable ${bundleName} versions:"
         println "-".multiply(60)
+        
+        // Show which directory each version is in
+        def binDir = file("${projectDir}/bin")
+        def archivedDir = file("${projectDir}/bin/archived")
+        
         versions.each { version ->
-            println "  ${version}"
+            def location = ""
+            if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
+                location = "[bin]"
+            } else if (archivedDir.exists() && file("${archivedDir}/${bundleName}${version}").exists()) {
+                location = "[bin/archived]"
+            }
+            println "  ${version.padRight(15)} ${location}"
         }
         println "-".multiply(60)
         println "Total versions: ${versions.size()}"
