@@ -44,12 +44,18 @@ ext {
     bundleType = buildProps.getProperty('bundle.type', 'tools')
     bundleFormat = buildProps.getProperty('bundle.format', '7z')
 
-    // Build paths - follow Apache pattern
+    // Build paths - follow Ant pattern with bundle type organization
     // rootDir is the parent of module-bruno (i.e., Bearsampp-dev)
     // bearsampp-build is inside Bearsampp-dev
     buildBasePath = file("${rootDir}/bearsampp-build").absolutePath
-    buildTmpPath = file("${buildDir}/tmp").absolutePath
-    bundleTmpPrepPath = file("${buildDir}/prep").absolutePath
+    buildTmpPath = file("${buildBasePath}/tmp").absolutePath
+    bundleTmpBuildPath = file("${buildTmpPath}/bundles_build/${bundleType}/${bundleName}").absolutePath
+    bundleTmpPrepPath = file("${buildTmpPath}/bundles_prep/${bundleType}/${bundleName}").absolutePath
+    bundleTmpSrcPath = file("${buildTmpPath}/bundles_src").absolutePath
+    
+    // Download and extract paths - use bearsampp-build/tmp instead of local build/
+    bundleTmpDownloadPath = file("${buildTmpPath}/downloads/${bundleName}").absolutePath
+    bundleTmpExtractPath = file("${buildTmpPath}/extract/${bundleName}").absolutePath
 }
 
 // Verify dev path exists
@@ -87,8 +93,8 @@ def downloadAndExtractBruno(String version, File destDir) {
 
     // Determine filename from URL
     def filename = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1)
-    def downloadDir = file("${buildDir}/downloads")
-    def extractDir = file("${buildDir}/extract")
+    def downloadDir = file(bundleTmpDownloadPath)
+    def extractDir = file(bundleTmpExtractPath)
     downloadDir.mkdirs()
     extractDir.mkdirs()
 
@@ -224,6 +230,12 @@ tasks.register('info') {
           Root Dir:     ${rootDir}
           Dev Path:     ${devPath}
           Build Base:   ${buildBasePath}
+          Build Tmp:    ${buildTmpPath}
+          Tmp Prep:     ${bundleTmpPrepPath}
+          Tmp Build:    ${bundleTmpBuildPath}
+          Tmp Src:      ${bundleTmpSrcPath}
+          Tmp Download: ${bundleTmpDownloadPath}
+          Tmp Extract:  ${bundleTmpExtractPath}
           Output Path:  ${outputPath}
 
         Java:
@@ -342,23 +354,23 @@ tasks.register('release') {
         // Check if bruno.exe exists in bin/ directory
         def brunoExe = file("${bundleSrcFinal}/bruno.exe")
         if (!brunoExe.exists()) {
-            // Bruno binaries not found in bin/ - check if already downloaded to build/
-            def buildExtractPath = file("${buildDir}/extract/${bundleVersion}")
-            def buildBrunoDir = findBrunoDirectory(buildExtractPath)
+            // Bruno binaries not found in bin/ - check if already downloaded to bearsampp-build/tmp
+            def tmpExtractPath = file("${bundleTmpExtractPath}/${bundleVersion}")
+            def tmpBrunoDir = findBrunoDirectory(tmpExtractPath)
 
-            if (buildBrunoDir && buildBrunoDir.exists()) {
-                println "Using cached Bruno binaries from build directory"
-                bundleSrcFinal = buildBrunoDir
+            if (tmpBrunoDir && tmpBrunoDir.exists()) {
+                println "Using cached Bruno binaries from bearsampp-build/tmp"
+                bundleSrcFinal = tmpBrunoDir
             } else {
-                // Download and extract to build directory
+                // Download and extract to bearsampp-build/tmp
                 println ""
                 println "Bruno binaries not found"
                 println "Downloading Bruno ${bundleVersion}..."
                 println ""
 
                 try {
-                    // Download and extract to build directory
-                    bundleSrcFinal = downloadAndExtractBruno(bundleVersion, file("${buildDir}/extract"))
+                    // Download and extract to bearsampp-build/tmp
+                    bundleSrcFinal = downloadAndExtractBruno(bundleVersion, file(bundleTmpExtractPath))
                 } catch (Exception e) {
                     throw new GradleException("""
                         Failed to download Bruno binaries: ${e.message}
