@@ -49,15 +49,15 @@ ext {
     def buildPathFromProps = buildProps.getProperty('build.path', '').trim()
     def buildPathFromEnv = System.getenv('BEARSAMPP_BUILD_PATH') ?: ''
     def defaultBuildPath = "${rootDir}/bearsampp-build"
-    
+
     buildBasePath = buildPathFromProps ?: (buildPathFromEnv ?: defaultBuildPath)
-    
+
     // Use shared bearsampp-build/tmp directory structure (same as Ant builds)
     buildTmpPath = file("${buildBasePath}/tmp").absolutePath
     bundleTmpBuildPath = file("${buildTmpPath}/bundles_build/${bundleType}/${bundleName}").absolutePath
     bundleTmpPrepPath = file("${buildTmpPath}/bundles_prep/${bundleType}/${bundleName}").absolutePath
     bundleTmpSrcPath = file("${buildTmpPath}/bundles_src").absolutePath
-    
+
     // Download and extract paths - use bearsampp-build/tmp instead of local build/
     bundleTmpDownloadPath = file("${buildTmpPath}/downloads/${bundleName}").absolutePath
     bundleTmpExtractPath = file("${buildTmpPath}/extract/${bundleName}").absolutePath
@@ -296,7 +296,7 @@ tasks.register('release') {
         if (!versionToBuild) {
             // Interactive mode - prompt for version
             def availableVersions = getAvailableVersions()
-            
+
             if (availableVersions.isEmpty()) {
                 throw new GradleException("No versions found in bin/ directory")
             }
@@ -307,11 +307,11 @@ tasks.register('release') {
             println "=".multiply(70)
             println ""
             println "Available versions:"
-            
+
             // Show versions with location tags
             def binDir = file("${projectDir}/bin")
             def archivedDir = file("${projectDir}/bin/archived")
-            
+
             availableVersions.eachWithIndex { version, index ->
                 def location = ""
                 if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
@@ -322,36 +322,44 @@ tasks.register('release') {
                 println "  ${(index + 1).toString().padLeft(2)}. ${version.padRight(15)} ${location}"
             }
             println ""
-            
-            // Prompt for version
-            def console = System.console()
-            if (console) {
-                // Running in a real console
-                def input = console.readLine("Enter version number to build (or press Enter to cancel): ")
-                versionToBuild = input?.trim()
-            } else {
-                // Running in IDE or without console - use standard input
-                println "Enter version number to build (or press Enter to cancel):"
+            println "Enter version number to build:"
+            println ""
+
+            // Read input using Gradle's standard input
+            def input = null
+            try {
                 def reader = new BufferedReader(new InputStreamReader(System.in))
-                versionToBuild = reader.readLine()?.trim()
+                input = reader.readLine()
+            } catch (Exception e) {
+                throw new GradleException("""
+                    Failed to read input. Please use non-interactive mode:
+                      gradle release -PbundleVersion=X.X.X
+
+                    Available versions: ${availableVersions.join(', ')}
+                """.stripIndent())
             }
-            
-            if (!versionToBuild || versionToBuild.isEmpty()) {
-                println ""
-                println "Build cancelled by user."
-                return
+
+            if (!input || input.trim().isEmpty()) {
+                throw new GradleException("""
+                    No version selected. Please use non-interactive mode:
+                      gradle release -PbundleVersion=X.X.X
+
+                    Available versions: ${availableVersions.join(', ')}
+                """.stripIndent())
             }
-            
+
+            versionToBuild = input.trim()
+
             // Validate the entered version
             if (!availableVersions.contains(versionToBuild)) {
                 throw new GradleException("""
                     Invalid version: ${versionToBuild}
-                    
+
                     Please choose from available versions:
                     ${availableVersions.collect { "  - ${it}" }.join('\n')}
                 """.stripIndent())
             }
-            
+
             println ""
             println "Selected version: ${versionToBuild}"
         }
@@ -623,7 +631,7 @@ def calculateHash(File file, String algorithm) {
 // Helper function to get available versions
 def getAvailableVersions() {
     def versions = []
-    
+
     // Check bin directory
     def binDir = file("${projectDir}/bin")
     if (binDir.exists()) {
@@ -632,7 +640,7 @@ def getAvailableVersions() {
             ?.collect { it.name.replace(bundleName, '') } ?: []
         versions.addAll(binVersions)
     }
-    
+
     // Check bin/archived subdirectory
     def archivedDir = file("${projectDir}/bin/archived")
     if (archivedDir.exists()) {
@@ -641,7 +649,7 @@ def getAvailableVersions() {
             ?.collect { it.name.replace(bundleName, '') } ?: []
         versions.addAll(archivedVersions)
     }
-    
+
     // Remove duplicates and sort
     return versions.unique().sort()
 }
@@ -865,11 +873,11 @@ tasks.register('listVersions') {
 
         println "\nAvailable ${bundleName} versions:"
         println "-".multiply(60)
-        
+
         // Show which directory each version is in
         def binDir = file("${projectDir}/bin")
         def archivedDir = file("${projectDir}/bin/archived")
-        
+
         versions.each { version ->
             def location = ""
             if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
