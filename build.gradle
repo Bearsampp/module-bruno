@@ -253,7 +253,7 @@ tasks.register('info') {
 // Task: Main release task - build a specific version
 tasks.register('release') {
     group = 'build'
-    description = 'Build release package for a specific version (use -PbundleVersion=X.X.X)'
+    description = 'Build release package for a specific version (use -PbundleVersion=X.X.X or run interactively)'
 
     // Capture property at configuration time to avoid deprecation warning
     def versionProperty = project.findProperty('bundleVersion')
@@ -262,14 +262,55 @@ tasks.register('release') {
         def versionToBuild = versionProperty
 
         if (!versionToBuild) {
-            throw new GradleException("""
-                Bundle version not specified!
+            // Interactive mode - prompt for version
+            def availableVersions = getAvailableVersions()
+            
+            if (availableVersions.isEmpty()) {
+                throw new GradleException("No versions found in bin/ directory")
+            }
 
-                Usage: gradle release -PbundleVersion=X.X.X
-
-                Available versions:
-                ${getAvailableVersions().collect { "  - ${it}" }.join('\n')}
-            """.stripIndent())
+            println ""
+            println "=".multiply(70)
+            println "Interactive Release Mode"
+            println "=".multiply(70)
+            println ""
+            println "Available versions:"
+            availableVersions.eachWithIndex { version, index ->
+                println "  ${(index + 1).toString().padLeft(2)}. ${version}"
+            }
+            println ""
+            
+            // Prompt for version
+            def console = System.console()
+            if (console) {
+                // Running in a real console
+                def input = console.readLine("Enter version number to build (or press Enter to cancel): ")
+                versionToBuild = input?.trim()
+            } else {
+                // Running in IDE or without console - use standard input
+                println "Enter version number to build (or press Enter to cancel):"
+                def reader = new BufferedReader(new InputStreamReader(System.in))
+                versionToBuild = reader.readLine()?.trim()
+            }
+            
+            if (!versionToBuild || versionToBuild.isEmpty()) {
+                println ""
+                println "Build cancelled by user."
+                return
+            }
+            
+            // Validate the entered version
+            if (!availableVersions.contains(versionToBuild)) {
+                throw new GradleException("""
+                    Invalid version: ${versionToBuild}
+                    
+                    Please choose from available versions:
+                    ${availableVersions.collect { "  - ${it}" }.join('\n')}
+                """.stripIndent())
+            }
+            
+            println ""
+            println "Selected version: ${versionToBuild}"
         }
 
         println ""
