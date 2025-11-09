@@ -44,10 +44,15 @@ ext {
     bundleType = buildProps.getProperty('bundle.type', 'tools')
     bundleFormat = buildProps.getProperty('bundle.format', '7z')
 
-    // Build paths - follow Ant pattern with bundle type organization
-    // rootDir is the parent of module-bruno (i.e., Bearsampp-dev)
-    // bearsampp-build is inside Bearsampp-dev
-    buildBasePath = file("${rootDir}/bearsampp-build").absolutePath
+    // Build paths - with configurable base path
+    // Priority: 1) build.properties, 2) Environment variable, 3) Default
+    def buildPathFromProps = buildProps.getProperty('build.path', '').trim()
+    def buildPathFromEnv = System.getenv('BEARSAMPP_BUILD_PATH') ?: ''
+    def defaultBuildPath = "${rootDir}/bearsampp-build"
+    
+    buildBasePath = buildPathFromProps ?: (buildPathFromEnv ?: defaultBuildPath)
+    
+    // Use shared bearsampp-build/tmp directory structure (same as Ant builds)
     buildTmpPath = file("${buildBasePath}/tmp").absolutePath
     bundleTmpBuildPath = file("${buildTmpPath}/bundles_build/${bundleType}/${bundleName}").absolutePath
     bundleTmpPrepPath = file("${buildTmpPath}/bundles_prep/${bundleType}/${bundleName}").absolutePath
@@ -202,14 +207,30 @@ tasks.register('info') {
     group = 'help'
     description = 'Display build configuration information'
 
-    // Capture project properties at configuration time
+    // Capture values at configuration time to avoid deprecation warnings
     def projectName = project.name
     def projectVersion = project.version
     def projectDescription = project.description
+    def projectBasedirValue = projectBasedir
+    def rootDirValue = rootDir
+    def devPathValue = devPath
+    def bundleNameValue = bundleName
+    def bundleReleaseValue = bundleRelease
+    def bundleTypeValue = bundleType
+    def bundleFormatValue = bundleFormat
+    def buildBasePathValue = buildBasePath
+    def buildTmpPathValue = buildTmpPath
+    def bundleTmpPrepPathValue = bundleTmpPrepPath
+    def bundleTmpBuildPathValue = bundleTmpBuildPath
+    def bundleTmpSrcPathValue = bundleTmpSrcPath
+    def bundleTmpDownloadPathValue = bundleTmpDownloadPath
+    def bundleTmpExtractPathValue = bundleTmpExtractPath
+    def javaVersion = JavaVersion.current()
+    def javaHome = System.getProperty('java.home')
+    def gradleVersion = gradle.gradleVersion
+    def gradleHome = gradle.gradleHomeDir
 
     doLast {
-        def outputPath = file("${buildBasePath}/${bundleType}/${bundleName}/${bundleRelease}").absolutePath
-
         println """
         ================================================================
                   Bearsampp Module Bruno - Build Info
@@ -220,31 +241,30 @@ tasks.register('info') {
         Description:    ${projectDescription}
 
         Bundle Properties:
-          Name:         ${bundleName}
-          Release:      ${bundleRelease}
-          Type:         ${bundleType}
-          Format:       ${bundleFormat}
+          Name:         ${bundleNameValue}
+          Release:      ${bundleReleaseValue}
+          Type:         ${bundleTypeValue}
+          Format:       ${bundleFormatValue}
 
         Paths:
-          Project Dir:  ${projectBasedir}
-          Root Dir:     ${rootDir}
-          Dev Path:     ${devPath}
-          Build Base:   ${buildBasePath}
-          Build Tmp:    ${buildTmpPath}
-          Tmp Prep:     ${bundleTmpPrepPath}
-          Tmp Build:    ${bundleTmpBuildPath}
-          Tmp Src:      ${bundleTmpSrcPath}
-          Tmp Download: ${bundleTmpDownloadPath}
-          Tmp Extract:  ${bundleTmpExtractPath}
-          Output Path:  ${outputPath}
+          Project Dir:  ${projectBasedirValue}
+          Root Dir:     ${rootDirValue}
+          Dev Path:     ${devPathValue}
+          Build Base:   ${buildBasePathValue}
+          Build Tmp:    ${buildTmpPathValue}
+          Tmp Prep:     ${bundleTmpPrepPathValue}
+          Tmp Build:    ${bundleTmpBuildPathValue}
+          Tmp Src:      ${bundleTmpSrcPathValue}
+          Tmp Download: ${bundleTmpDownloadPathValue}
+          Tmp Extract:  ${bundleTmpExtractPathValue}
 
         Java:
-          Version:      ${JavaVersion.current()}
-          Home:         ${System.getProperty('java.home')}
+          Version:      ${javaVersion}
+          Home:         ${javaHome}
 
         Gradle:
-          Version:      ${gradle.gradleVersion}
-          Home:         ${gradle.gradleHomeDir}
+          Version:      ${gradleVersion}
+          Home:         ${gradleHome}
 
         Available Task Groups:
           * build        - Build and package tasks
@@ -287,8 +307,19 @@ tasks.register('release') {
             println "=".multiply(70)
             println ""
             println "Available versions:"
+            
+            // Show versions with location tags
+            def binDir = file("${projectDir}/bin")
+            def archivedDir = file("${projectDir}/bin/archived")
+            
             availableVersions.eachWithIndex { version, index ->
-                println "  ${(index + 1).toString().padLeft(2)}. ${version}"
+                def location = ""
+                if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
+                    location = "[bin]"
+                } else if (archivedDir.exists() && file("${archivedDir}/${bundleName}${version}").exists()) {
+                    location = "[bin/archived]"
+                }
+                println "  ${(index + 1).toString().padLeft(2)}. ${version.padRight(15)} ${location}"
             }
             println ""
             
