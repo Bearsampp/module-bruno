@@ -77,6 +77,104 @@ repositories {
 // HELPER FUNCTIONS
 // ============================================================================
 
+// Function to check if version exists in releases.properties
+def versionExistsInReleases(String version) {
+    def releasesFile = file('releases.properties')
+    if (!releasesFile.exists()) {
+        return false
+    }
+
+    def releases = new Properties()
+    releasesFile.withInputStream { releases.load(it) }
+
+    return releases.getProperty(version) != null
+}
+
+// Function to fetch bruno.properties from modules-untouched repository
+def fetchModulesUntouchedProperties() {
+    def propsUrl = "https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/bruno.properties"
+    
+    println "Fetching bruno.properties from modules-untouched..."
+    println "  ${propsUrl}"
+    
+    def tempFile = file("${bundleTmpDownloadPath}/bruno-untouched.properties")
+    tempFile.parentFile.mkdirs()
+    
+    try {
+        ant.get(src: propsUrl, dest: tempFile, verbose: false)
+        
+        def props = new Properties()
+        tempFile.withInputStream { props.load(it) }
+        
+        println "  Successfully loaded ${props.size()} versions from modules-untouched"
+        return props
+    } catch (Exception e) {
+        println "  Warning: Could not fetch bruno.properties from modules-untouched: ${e.message}"
+        return null
+    }
+}
+
+// Function to download from modules-untouched repository
+def downloadFromModulesUntouched(String version, File destDir) {
+    println "Version ${version} not found in releases.properties"
+    println "Checking modules-untouched repository..."
+
+    // First, try to fetch bruno.properties from modules-untouched
+    def untouchedProps = fetchModulesUntouchedProperties()
+    def untouchedUrl = null
+    
+    if (untouchedProps) {
+        untouchedUrl = untouchedProps.getProperty(version)
+        if (untouchedUrl) {
+            println "Found version ${version} in modules-untouched bruno.properties"
+            println "Downloading from:"
+            println "  ${untouchedUrl}"
+        } else {
+            println "Version ${version} not found in modules-untouched bruno.properties"
+            println "Attempting to construct URL based on standard format..."
+            // Fallback to constructed URL
+            untouchedUrl = "https://github.com/Bearsampp/modules-untouched/releases/download/bruno-${version}/bruno-${version}-win64.7z"
+            println "  ${untouchedUrl}"
+        }
+    } else {
+        println "Could not fetch bruno.properties, using standard URL format..."
+        // Fallback to constructed URL
+        untouchedUrl = "https://github.com/Bearsampp/modules-untouched/releases/download/bruno-${version}/bruno-${version}-win64.7z"
+        println "  ${untouchedUrl}"
+    }
+
+    // Determine filename from URL
+    def filename = untouchedUrl.substring(untouchedUrl.lastIndexOf('/') + 1)
+    def downloadDir = file(bundleTmpDownloadPath)
+    downloadDir.mkdirs()
+
+    def downloadedFile = file("${downloadDir}/${filename}")
+
+    // Download if not already present
+    if (!downloadedFile.exists()) {
+        println "  Downloading to: ${downloadedFile}"
+        try {
+            ant.get(src: untouchedUrl, dest: downloadedFile, verbose: true)
+            println "  Download complete from modules-untouched"
+        } catch (Exception e) {
+            throw new GradleException("""
+                Failed to download from modules-untouched: ${e.message}
+
+                Tried URL: ${untouchedUrl}
+
+                Please verify:
+                1. Version ${version} exists in modules-untouched repository
+                2. The URL is correct in bruno.properties or matches format: bruno-{version}/bruno-{version}-win64.7z
+                3. You have internet connectivity
+            """.stripIndent())
+        }
+    } else {
+        println "  Using cached file: ${downloadedFile}"
+    }
+
+    return downloadedFile
+}
+
 // Function to download and extract Bruno binaries
 def downloadAndExtractBruno(String version, File destDir) {
     // Load releases.properties to get download URL
@@ -89,38 +187,48 @@ def downloadAndExtractBruno(String version, File destDir) {
     releasesFile.withInputStream { releases.load(it) }
 
     def downloadUrl = releases.getProperty(version)
+    def downloadedFile = null
+
+    // Check if version exists in releases.properties
     if (!downloadUrl) {
-        throw new GradleException("Version ${version} not found in releases.properties")
-    }
+        println "Version ${version} not found in releases.properties"
+        println "Fetching from modules-untouched repository..."
 
-    println "Downloading Bruno ${version} from:"
-    println "  ${downloadUrl}"
-
-    // Determine filename from URL
-    def filename = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1)
-    def downloadDir = file(bundleTmpDownloadPath)
-    def extractDir = file(bundleTmpExtractPath)
-    downloadDir.mkdirs()
-    extractDir.mkdirs()
-
-    def downloadedFile = file("${downloadDir}/${filename}")
-
-    // Download if not already present
-    if (!downloadedFile.exists()) {
-        println "  Downloading to: ${downloadedFile}"
-        ant.get(src: downloadUrl, dest: downloadedFile, verbose: true)
-        println "  Download complete"
+        // Try to download from modules-untouched
+        downloadedFile = downloadFromModulesUntouched(version, destDir)
     } else {
-        println "  Using cached file: ${downloadedFile}"
+        println "Downloading Bruno ${version} from:"
+        println "  ${downloadUrl}"
+
+        // Determine filename from URL
+        def filename = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1)
+        def downloadDir = file(bundleTmpDownloadPath)
+        downloadDir.mkdirs()
+
+        downloadedFile = file("${downloadDir}/${filename}")
+
+        // Download if not already present
+        if (!downloadedFile.exists()) {
+            println "  Downloading to: ${downloadedFile}"
+            ant.get(src: downloadUrl, dest: downloadedFile, verbose: true)
+            println "  Download complete"
+        } else {
+            println "  Using cached file: ${downloadedFile}"
+        }
     }
 
     // Extract the archive
+    def extractDir = file(bundleTmpExtractPath)
+    extractDir.mkdirs()
     println "  Extracting archive..."
     def extractPath = file("${extractDir}/${version}")
     if (extractPath.exists()) {
         delete extractPath
     }
     extractPath.mkdirs()
+
+    // Determine filename from downloaded file
+    def filename = downloadedFile.name
 
     // Use 7zip or built-in extraction
     if (filename.endsWith('.7z')) {
@@ -168,6 +276,14 @@ def downloadAndExtractBruno(String version, File destDir) {
     }
 
     println "  Found Bruno directory: ${brunoDir.name}"
+
+    // If downloaded from modules-untouched, add a note
+    if (!versionExistsInReleases(version)) {
+        println ""
+        println "NOTE: Version ${version} was downloaded from modules-untouched repository"
+        println "      Consider adding it to releases.properties for future builds"
+    }
+
     return brunoDir
 }
 

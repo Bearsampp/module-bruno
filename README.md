@@ -7,6 +7,38 @@ Bruno IDE for bearsampp project
 
 This is a module of [Bearsampp project](https://github.com/bearsampp/bearsampp) involving PHP.
 
+## Build System
+
+This project uses Gradle for building releases. For complete build documentation, see [.gradle-docs/](.gradle-docs/).
+
+### Quick Start
+
+```bash
+# Display build information
+gradle info
+
+# Build a specific version
+gradle release -PbundleVersion=2.13.0
+
+# List available versions
+gradle listVersions
+
+# Verify build environment
+gradle verify
+```
+
+### Key Features
+
+- ✅ Automatic download from modules-untouched repository
+- ✅ Smart URL resolution with 3-tier fallback
+- ✅ Efficient caching system
+- ✅ Backward compatible with existing builds
+
+For detailed documentation, see:
+- [Quick Reference](.gradle-docs/QUICK_REFERENCE.md)
+- [Modules-Untouched Integration](.gradle-docs/MODULES_UNTOUCHED_INTEGRATION.md)
+- [Complete Documentation Index](.gradle-docs/README.md)
+
 ## Documentation and downloads
 
 https://bearsampp.com/module/bruno
