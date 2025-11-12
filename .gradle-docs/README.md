@@ -10,6 +10,7 @@ This directory contains comprehensive documentation for the Gradle build system 
 ### Feature Documentation
 - **[MODULES_UNTOUCHED_INTEGRATION.md](MODULES_UNTOUCHED_INTEGRATION.md)** - Complete guide to the modules-untouched integration feature
 - **[FEATURE_SUMMARY.md](FEATURE_SUMMARY.md)** - High-level overview of the smart module download system
+- **[CONFIGURATION_SUMMARY.md](CONFIGURATION_SUMMARY.md)** - Configuration overview and version resolution strategy
 
 ### Technical Documentation
 - **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Technical implementation details and architecture
