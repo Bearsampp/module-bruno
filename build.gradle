@@ -105,19 +105,24 @@ def versionExistsInReleases(String version) {
 // This is the primary source for version information when not in releases.properties
 def fetchModulesUntouchedProperties() {
     def propsUrl = "https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/bruno.properties"
-    
+
     println "Fetching bruno.properties from modules-untouched repository..."
     println "  URL: ${propsUrl}"
-    
+
     def tempFile = file("${bundleTmpDownloadPath}/bruno-untouched.properties")
     tempFile.parentFile.mkdirs()
-    
+
     try {
-        ant.get(src: propsUrl, dest: tempFile, verbose: false, ignoreerrors: false)
-        
+        // Download using Java URL connection instead of Ant
+        new URL(propsUrl).withInputStream { input ->
+            tempFile.withOutputStream { output ->
+                output << input
+            }
+        }
+
         def props = new Properties()
         tempFile.withInputStream { props.load(it) }
-        
+
         println "  ✓ Successfully loaded ${props.size()} versions from modules-untouched"
         return props
     } catch (Exception e) {
@@ -135,7 +140,7 @@ def downloadFromModulesUntouched(String version, File destDir) {
     // First, try to fetch bruno.properties from modules-untouched
     def untouchedProps = fetchModulesUntouchedProperties()
     def untouchedUrl = null
-    
+
     if (untouchedProps) {
         untouchedUrl = untouchedProps.getProperty(version)
         if (untouchedUrl) {
@@ -167,7 +172,16 @@ def downloadFromModulesUntouched(String version, File destDir) {
     if (!downloadedFile.exists()) {
         println "  Downloading to: ${downloadedFile}"
         try {
-            ant.get(src: untouchedUrl, dest: downloadedFile, verbose: true)
+            // Download using Java URL connection instead of Ant
+            new URL(untouchedUrl).withInputStream { input ->
+                downloadedFile.withOutputStream { output ->
+                    def buffer = new byte[8192]
+                    def bytesRead
+                    while ((bytesRead = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, bytesRead)
+                    }
+                }
+            }
             println "  Download complete from modules-untouched"
         } catch (Exception e) {
             throw new GradleException("""
@@ -223,7 +237,16 @@ def downloadAndExtractBruno(String version, File destDir) {
         // Download if not already present
         if (!downloadedFile.exists()) {
             println "  Downloading to: ${downloadedFile}"
-            ant.get(src: downloadUrl, dest: downloadedFile, verbose: true)
+            // Download using Java URL connection instead of Ant
+            new URL(downloadUrl).withInputStream { input ->
+                downloadedFile.withOutputStream { output ->
+                    def buffer = new byte[8192]
+                    def bytesRead
+                    while ((bytesRead = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, bytesRead)
+                    }
+                }
+            }
             println "  Download complete"
         } else {
             println "  Using cached file: ${downloadedFile}"
@@ -644,7 +667,7 @@ tasks.register('release') {
             generateHashFiles(archiveFile)
 
         } else {
-            // ZIP format
+            // ZIP format - using native Gradle zip task
             def archiveFile = file("${destFile}.zip")
             if (archiveFile.exists()) {
                 delete archiveFile
@@ -652,7 +675,12 @@ tasks.register('release') {
 
             println "Compressing ${bundleName}${bundleVersion} to ${archiveFile.name}..."
 
-            ant.zip(destfile: archiveFile, basedir: brunoPrepPath)
+            // Create ZIP archive using Gradle's built-in zip functionality
+            task("zipArchive_${bundleVersion}", type: Zip) {
+                from brunoPrepPath
+                destinationDirectory = archiveFile.parentFile
+                archiveFileName = archiveFile.name
+            }.execute()
 
             println "Archive created: ${archiveFile}"
 
@@ -1069,21 +1097,21 @@ tasks.register('checkModulesUntouched') {
         println "Modules-Untouched Integration Check"
         println "=".multiply(70)
         println ""
-        
+
         def propsUrl = "https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/bruno.properties"
         println "Repository URL:"
         println "  ${propsUrl}"
         println ""
-        
+
         println "Fetching bruno.properties from modules-untouched..."
         def untouchedProps = fetchModulesUntouchedProperties()
-        
+
         if (untouchedProps) {
             println ""
             println "=".multiply(70)
             println "Available Versions in modules-untouched"
             println "=".multiply(70)
-            
+
             def sortedVersions = untouchedProps.sort { a, b ->
                 // Simple version comparison
                 def aParts = a.key.tokenize('.')
@@ -1095,25 +1123,25 @@ tasks.register('checkModulesUntouched') {
                 }
                 return aParts.size() <=> bParts.size()
             }
-            
+
             sortedVersions.each { version, url ->
                 def inReleases = versionExistsInReleases(version) ? "[in releases.properties]" : ""
                 println "  ${version.padRight(10)} ${inReleases}"
             }
-            
+
             println "=".multiply(70)
             println "Total versions: ${untouchedProps.size()}"
             println ""
-            
+
             // Compare with releases.properties
             def releasesFile = file('releases.properties')
             if (releasesFile.exists()) {
                 def releases = new Properties()
                 releasesFile.withInputStream { releases.load(it) }
-                
+
                 def onlyInUntouched = untouchedProps.keySet() - releases.keySet()
                 def onlyInReleases = releases.keySet() - untouchedProps.keySet()
-                
+
                 if (!onlyInUntouched.isEmpty()) {
                     println "Versions only in modules-untouched (${onlyInUntouched.size()}):"
                     onlyInUntouched.sort().each { version ->
@@ -1121,7 +1149,7 @@ tasks.register('checkModulesUntouched') {
                     }
                     println ""
                 }
-                
+
                 if (!onlyInReleases.isEmpty()) {
                     println "Versions only in releases.properties (${onlyInReleases.size()}):"
                     onlyInReleases.sort().each { version ->
@@ -1129,11 +1157,11 @@ tasks.register('checkModulesUntouched') {
                     }
                     println ""
                 }
-                
+
                 def inBoth = untouchedProps.keySet().intersect(releases.keySet())
                 println "Versions in both sources: ${inBoth.size()}"
             }
-            
+
             println ""
             println "=".multiply(70)
             println "[SUCCESS] modules-untouched integration is working"
@@ -1145,7 +1173,7 @@ tasks.register('checkModulesUntouched') {
             println "  3. Construct standard URL format (fallback)"
             println ""
             println "Documentation: /.gradle-docs/MODULES_UNTOUCHED_INTEGRATION.md"
-            
+
         } else {
             println ""
             println "=".multiply(70)
