@@ -606,6 +606,21 @@ tasks.register('release') {
             include 'bearsampp.conf'
         }
 
+        // Copy to bundles_build directory (non-zip version for development/testing)
+        println ""
+        println "Copying to bundles_build directory..."
+        def brunoBuildPath = file("${bundleTmpBuildPath}/${bundleName}${bundleVersion}")
+        if (brunoBuildPath.exists()) {
+            delete brunoBuildPath
+        }
+        brunoBuildPath.mkdirs()
+
+        copy {
+            from brunoPrepPath
+            into brunoBuildPath
+        }
+        println "Non-zip version available at: ${brunoBuildPath}"
+
         println ""
         println "Preparing archive..."
 
