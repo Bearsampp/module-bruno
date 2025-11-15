@@ -4,11 +4,10 @@
  * This is a 100% Gradle build configuration for the Bruno module.
  * It handles downloading, extracting, and packaging Bruno releases.
  *
- * VERSION RESOLUTION STRATEGY (3-tier fallback):
- *   1. Local releases.properties (primary source)
- *   2. Remote modules-untouched bruno.properties (automatic fallback)
+ * VERSION RESOLUTION STRATEGY:
+ *   1. Remote modules-untouched bruno.properties (primary source)
  *      URL: https://github.com/Bearsampp/modules-untouched/blob/main/modules/bruno.properties
- *   3. Standard URL format construction (last resort)
+ *   2. Standard URL format construction (fallback)
  *
  * DOCUMENTATION:
  *   All build documentation is located in /.gradle-docs/
@@ -22,7 +21,7 @@
  *   gradle info                               - Display build information
  *   gradle verify                             - Verify build environment
  *   gradle listVersions                       - List available versions
- *   gradle listReleases                       - List releases from properties
+ *   gradle listReleases                       - List releases from modules-untouched
  *   gradle checkModulesUntouched              - Check modules-untouched integration
  */
 
@@ -88,21 +87,11 @@ repositories {
 // HELPER FUNCTIONS
 // ============================================================================
 
-// Function to check if version exists in releases.properties
-def versionExistsInReleases(String version) {
-    def releasesFile = file('releases.properties')
-    if (!releasesFile.exists()) {
-        return false
-    }
-
-    def releases = new Properties()
-    releasesFile.withInputStream { releases.load(it) }
-
-    return releases.getProperty(version) != null
-}
+// NOTE: Local releases.properties is no longer used. Versions are sourced from
+//       modules-untouched bruno.properties or constructed URL as fallback.
 
 // Function to fetch bruno.properties from modules-untouched repository
-// This is the primary source for version information when not in releases.properties
+// This is the primary source for version information
 def fetchModulesUntouchedProperties() {
     def propsUrl = "https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/bruno.properties"
 
@@ -134,7 +123,6 @@ def fetchModulesUntouchedProperties() {
 
 // Function to download from modules-untouched repository
 def downloadFromModulesUntouched(String version, File destDir) {
-    println "Version ${version} not found in releases.properties"
     println "Checking modules-untouched repository..."
 
     // First, try to fetch bruno.properties from modules-untouched
@@ -204,54 +192,9 @@ def downloadFromModulesUntouched(String version, File destDir) {
 
 // Function to download and extract Bruno binaries
 def downloadAndExtractBruno(String version, File destDir) {
-    // Load releases.properties to get download URL
-    def releasesFile = file('releases.properties')
-    if (!releasesFile.exists()) {
-        throw new GradleException("releases.properties not found")
-    }
-
-    def releases = new Properties()
-    releasesFile.withInputStream { releases.load(it) }
-
-    def downloadUrl = releases.getProperty(version)
-    def downloadedFile = null
-
-    // Check if version exists in releases.properties
-    if (!downloadUrl) {
-        println "Version ${version} not found in releases.properties"
-        println "Fetching from modules-untouched repository..."
-
-        // Try to download from modules-untouched
-        downloadedFile = downloadFromModulesUntouched(version, destDir)
-    } else {
-        println "Downloading Bruno ${version} from:"
-        println "  ${downloadUrl}"
-
-        // Determine filename from URL
-        def filename = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1)
-        def downloadDir = file(bundleTmpDownloadPath)
-        downloadDir.mkdirs()
-
-        downloadedFile = file("${downloadDir}/${filename}")
-
-        // Download if not already present
-        if (!downloadedFile.exists()) {
-            println "  Downloading to: ${downloadedFile}"
-            // Download using Java URL connection instead of Ant
-            new URL(downloadUrl).withInputStream { input ->
-                downloadedFile.withOutputStream { output ->
-                    def buffer = new byte[8192]
-                    def bytesRead
-                    while ((bytesRead = input.read(buffer)) != -1) {
-                        output.write(buffer, 0, bytesRead)
-                    }
-                }
-            }
-            println "  Download complete"
-        } else {
-            println "  Using cached file: ${downloadedFile}"
-        }
-    }
+    // Always source versions/URLs from modules-untouched bruno.properties,
+    // falling back to the standard constructed URL when missing.
+    def downloadedFile = downloadFromModulesUntouched(version, destDir)
 
     // Extract the archive
     def extractDir = file(bundleTmpExtractPath)
@@ -313,41 +256,45 @@ def downloadAndExtractBruno(String version, File destDir) {
 
     println "  Found Bruno directory: ${brunoDir.name}"
 
-    // If downloaded from modules-untouched, add a note
-    if (!versionExistsInReleases(version)) {
-        println ""
-        println "NOTE: Version ${version} was downloaded from modules-untouched repository"
-        println "      Consider adding it to releases.properties for future builds"
-    }
+    // Note about source
+    println ""
+    println "NOTE: Version ${version} was sourced from modules-untouched (or fallback URL)."
 
     return brunoDir
 }
 
 // Function to find Bruno directory in extracted files
 def findBrunoDirectory(File extractPath) {
-    // Look for directory containing bruno.exe
-    def brunoDirs = extractPath.listFiles()?.findAll {
-        it.isDirectory() && file("${it}/bruno.exe").exists()
+    // Helper to detect bruno.exe in a directory (case-insensitive variants)
+    def hasBrunoExe = { File dir ->
+        return new File(dir, 'bruno.exe').exists() || new File(dir, 'Bruno.exe').exists()
     }
 
-    if (brunoDirs && !brunoDirs.isEmpty()) {
-        return brunoDirs[0]
+    if (!extractPath?.exists()) {
+        return null
     }
 
-    // If not found at top level, search one level deep
-    def foundDir = null
-    extractPath.listFiles()?.each { dir ->
-        if (dir.isDirectory() && !foundDir) {
-            def subDirs = dir.listFiles()?.findAll {
-                it.isDirectory() && file("${it}/bruno.exe").exists()
-            }
-            if (subDirs && !subDirs.isEmpty()) {
-                foundDir = subDirs[0]
-            }
+    // Case 1: Files extracted directly into the root of extractPath
+    if (hasBrunoExe(extractPath)) {
+        return extractPath
+    }
+
+    // Case 2: Recursively search any depth for a directory that contains bruno.exe
+    File found = null
+
+    def stack = new ArrayDeque<File>()
+    extractPath.listFiles()?.findAll { it.isDirectory() }?.each { stack.push(it) }
+
+    while (!stack.isEmpty() && found == null) {
+        def dir = stack.pop()
+        if (hasBrunoExe(dir)) {
+            found = dir
+            break
         }
+        dir.listFiles()?.findAll { it.isDirectory() }?.each { stack.push(it) }
     }
 
-    return foundDir
+    return found
 }
 
 // ============================================================================
@@ -578,13 +525,13 @@ tasks.register('release') {
                     bundleSrcFinal = downloadAndExtractBruno(bundleVersion, file(bundleTmpExtractPath))
                 } catch (Exception e) {
                     throw new GradleException("""
-                        Failed to download Bruno binaries: ${e.message}
+                                Failed to download Bruno binaries: ${e.message}
 
-                        You can manually download and extract Bruno binaries to:
-                          ${bundleSrcDest}/
+                                You can manually download and extract Bruno binaries to:
+                                  ${bundleSrcDest}/
 
-                        Or check that version ${bundleVersion} exists in releases.properties
-                    """.stripIndent())
+                                Or check that version ${bundleVersion} exists in modules-untouched bruno.properties
+                            """.stripIndent())
                 }
             }
         }
@@ -612,12 +559,14 @@ tasks.register('release') {
             into brunoPrepPath
         }
 
-        // Copy configuration files from bin directory
-        println "Copying configuration files..."
+        // Overlay files from bin bundle directory (mirror Ant behavior)
+        // Ant copies all files from bundle.srcdest to ${bundle.tmp.prep.path}/${bundle.folder}
+        // then copies everything from bundle.path on top with overwrite=true.
+        println "Overlaying bundle files from bin directory..."
         copy {
             from bundleSrcDest
             into brunoPrepPath
-            include 'bearsampp.conf'
+            // Gradle copy overwrites by default; matches Ant overwrite="true"
         }
 
         // Copy to bundles_build directory (non-zip version for development/testing)
@@ -985,7 +934,6 @@ tasks.register('verify') {
 
         // Check required files
         checks['build.properties'] = file('build.properties').exists()
-        checks['releases.properties'] = file('releases.properties').exists()
 
         // Check dev directory
         checks['dev directory'] = file(devPath).exists()
@@ -1019,28 +967,26 @@ tasks.register('verify') {
     }
 }
 
-// Task: List all bundle versions from releases.properties
+// Task: List all bundle versions from modules-untouched bruno.properties
 tasks.register('listReleases') {
     group = 'help'
-    description = 'List all available releases from releases.properties'
+    description = 'List all available releases from modules-untouched bruno.properties'
 
     doLast {
-        def releasesFile = file('releases.properties')
-        if (!releasesFile.exists()) {
-            println "releases.properties not found"
+        def props = fetchModulesUntouchedProperties()
+        if (!props) {
+            println "\n[WARNING] Could not fetch modules-untouched bruno.properties."
+            println "No release information available."
             return
         }
 
-        def releases = new Properties()
-        releasesFile.withInputStream { releases.load(it) }
-
-        println "\nAvailable Bruno Releases:"
+        println "\nAvailable Bruno Releases (modules-untouched):"
         println "-".multiply(80)
-        releases.sort { it.key }.each { version, url ->
+        props.sort { a, b -> a.key <=> b.key }.each { version, url ->
             println "  ${version.padRight(10)} -> ${url}"
         }
         println "-".multiply(80)
-        println "Total releases: ${releases.size()}"
+        println "Total releases: ${props.size()}"
     }
 }
 
@@ -1154,42 +1100,12 @@ tasks.register('checkModulesUntouched') {
             }
 
             sortedVersions.each { version, url ->
-                def inReleases = versionExistsInReleases(version) ? "[in releases.properties]" : ""
-                println "  ${version.padRight(10)} ${inReleases}"
+                println "  ${version.padRight(10)}"
             }
 
             println "=".multiply(70)
             println "Total versions: ${untouchedProps.size()}"
             println ""
-
-            // Compare with releases.properties
-            def releasesFile = file('releases.properties')
-            if (releasesFile.exists()) {
-                def releases = new Properties()
-                releasesFile.withInputStream { releases.load(it) }
-
-                def onlyInUntouched = untouchedProps.keySet() - releases.keySet()
-                def onlyInReleases = releases.keySet() - untouchedProps.keySet()
-
-                if (!onlyInUntouched.isEmpty()) {
-                    println "Versions only in modules-untouched (${onlyInUntouched.size()}):"
-                    onlyInUntouched.sort().each { version ->
-                        println "  - ${version}"
-                    }
-                    println ""
-                }
-
-                if (!onlyInReleases.isEmpty()) {
-                    println "Versions only in releases.properties (${onlyInReleases.size()}):"
-                    onlyInReleases.sort().each { version ->
-                        println "  - ${version}"
-                    }
-                    println ""
-                }
-
-                def inBoth = untouchedProps.keySet().intersect(releases.keySet())
-                println "Versions in both sources: ${inBoth.size()}"
-            }
 
             println ""
             println "=".multiply(70)
@@ -1197,9 +1113,8 @@ tasks.register('checkModulesUntouched') {
             println "=".multiply(70)
             println ""
             println "Version Resolution Strategy:"
-            println "  1. Check releases.properties (local)"
-            println "  2. Check modules-untouched bruno.properties (remote)"
-            println "  3. Construct standard URL format (fallback)"
+            println "  1. Check modules-untouched bruno.properties (remote)"
+            println "  2. Construct standard URL format (fallback)"
             println ""
             println "Documentation: /.gradle-docs/MODULES_UNTOUCHED_INTEGRATION.md"
 
@@ -1215,8 +1130,7 @@ tasks.register('checkModulesUntouched') {
             println "  - File not available at expected location"
             println ""
             println "The build system will fall back to:"
-            println "  1. releases.properties (if version exists)"
-            println "  2. Standard URL format construction"
+            println "  1. Standard URL format construction"
         }
     }
 }
