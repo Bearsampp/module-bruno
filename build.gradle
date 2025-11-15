@@ -474,7 +474,7 @@ tasks.register('release') {
                 println "  ${(index + 1).toString().padLeft(2)}. ${version.padRight(15)} ${location}"
             }
             println ""
-            println "Enter version number to build:"
+            println "Enter version to build (index or version string):"
             println ""
 
             // Read input using Gradle's standard input
@@ -500,16 +500,30 @@ tasks.register('release') {
                 """.stripIndent())
             }
 
-            versionToBuild = input.trim()
+            def cleaned = input.trim()
 
-            // Validate the entered version
-            if (!availableVersions.contains(versionToBuild)) {
-                throw new GradleException("""
-                    Invalid version: ${versionToBuild}
+            // Accept either an index (1..N) or an explicit version string
+            if (cleaned.isInteger()) {
+                def idx = cleaned.toInteger()
+                if (idx < 1 || idx > availableVersions.size()) {
+                    throw new GradleException("""
+                        Invalid selection index: ${cleaned}
 
-                    Please choose from available versions:
-                    ${availableVersions.collect { "  - ${it}" }.join('\n')}
-                """.stripIndent())
+                        Please choose a number between 1 and ${availableVersions.size()} or enter a version string.
+                    """.stripIndent())
+                }
+                versionToBuild = availableVersions[idx - 1]
+            } else {
+                versionToBuild = cleaned
+                // Validate the entered version string exists
+                if (!availableVersions.contains(versionToBuild)) {
+                    throw new GradleException("""
+                        Invalid version: ${versionToBuild}
+
+                        Please choose from available versions:
+                        ${availableVersions.collect { "  - ${it}" }.join('\n')}
+                    """.stripIndent())
+                }
             }
 
             println ""
@@ -707,7 +721,7 @@ tasks.register('release') {
         println ""
         println "=".multiply(70)
         println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
-        println "Output directory: ${buildBinsPath}"
+        println "Output directory: ${brunoBuildPath}"
         println "Archive: ${destFile}.${bundleFormat}"
         println "=".multiply(70)
     }
